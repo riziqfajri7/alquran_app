@@ -2,7 +2,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 import mysql.connector
 from mysql.connector import Error
-
+import os
 # Default Qari
 DEFAULT_QARI_PER_AYAT = "ar.alafasy"
 DEFAULT_QARI_FULL = "Abdullah-Al-Juhany"
