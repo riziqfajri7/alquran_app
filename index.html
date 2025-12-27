@@ -533,19 +533,19 @@
         function displaySurah(surahList) {
             const container = document.getElementById('surahContainer');
             container.innerHTML = surahList.map(surah => `
-                <div class="surah-item cursor-pointer" onclick="showSurahDetail(${surah.id})">
-                    <div class="surah-item-number">${surah.id}</div>
+                <div class="surah-item cursor-pointer" onclick="showSurahDetail(${surah.nomor ?? surah.id})">
+                    <div class="surah-item-number">${surah.nomor ?? surah.id}</div>
                     <div class="surah-item-main">
                         <div class="flex justify-between items-center">
                             <div>
-                                <div class="surah-item-title">${surah.nama_latin}</div>
-                                <div class="surah-item-meta">${surah.tempat_turun} • ${surah.jumlah_ayat} AYAT</div>
+                                <div class="surah-item-title">${surah.namaLatin ?? surah.nama_latin}</div>
+                                <div class="surah-item-meta">${surah.tempatTurun ?? surah.tempat_turun} • ${(surah.jumlahAyat ?? surah.jumlah_ayat)} AYAT</div>
                             </div>
                         </div>
                     </div>
                     <div class="surah-item-arabic">
                         <div class="arabic-text text-xl text-teal-600">${surah.nama}</div>
-                        <button id="playSurahBtn-${surah.id}" class="surah-item-play" onclick="event.stopPropagation(); playSurahAudio(${surah.id})">
+                        <button id="playSurahBtn-${surah.nomor ?? surah.id}" class="surah-item-play" onclick="event.stopPropagation(); playSurahAudio(${surah.nomor ?? surah.id})">
                             <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
                         </button>
                     </div>
@@ -556,12 +556,25 @@
         }
 
         function filterSurah(query) {
-            const filtered = allSurah.filter(surah =>
-                surah.nama_latin.toLowerCase().includes(query.toLowerCase()) ||
-                surah.arti.toLowerCase().includes(query.toLowerCase())
-            );
+            const q = (query || '').toLowerCase().trim();
+            if (!q) { displaySurah(allSurah); return; }
+            const filtered = allSurah.filter(surah => {
+                const nama = (surah.namaLatin || surah.nama_latin || '').toLowerCase();
+                const arti = (surah.arti || '').toLowerCase();
+                const turun = (surah.tempatTurun || surah.tempat_turun || '').toLowerCase();
+                const nomor = String(surah.nomor ?? surah.id ?? '').toLowerCase();
+                return nama.includes(q) || arti.includes(q) || turun.includes(q) || nomor.includes(q);
+            });
             displaySurah(filtered);
         }
+
+        const QARI_MAP = {
+            'Abdullah-Al-Juhany': '01',
+            'Abdul-Muhsin-Al-Qasim': '02',
+            'Abdurrahman-as-Sudais': '03',
+            'Ibrahim-Al-Dossari': '04',
+            'Mishari-Rashid-Alafasy': '05'
+        };
 
         async function playSurahAudio(surahId) {
             const btn = document.getElementById(`playSurahBtn-${surahId}`);
@@ -575,12 +588,21 @@
             }
 
             try {
-                const response = await fetch(`${API_BASE}/audio/${surahId}`);
-                const data = await response.json();
-                if (data.status !== 'success' || !data.audio_url) throw new Error('Audio tidak tersedia');
+                let url = null;
+                const meta = getSurahMeta(surahId);
+                if (meta && meta.audioFull) {
+                    const key = QARI_MAP[currentQari] || Object.keys(meta.audioFull)[0];
+                    url = meta.audioFull[key] || null;
+                }
+                if (!url) {
+                    const response = await fetch(`${API_BASE}/audio/${surahId}`);
+                    const data = await response.json();
+                    if (data.status === 'success') url = data.audio_url;
+                }
+                if (!url) throw new Error('Audio tidak tersedia');
 
                 if (currentAudio) currentAudio.pause();
-                currentAudio = new Audio(data.audio_url);
+                currentAudio = new Audio(url);
                 await currentAudio.play();
                 isPlaying = true;
 
@@ -608,14 +630,15 @@
             try {
                 const response = await fetch(`${API_BASE}/surah/${id}`);
                 const data = await response.json();
-
-                // PENTING: Set currentSurah dengan data lengkap
+                const meta = getSurahMeta(id);
                 currentSurah = {
-                    id: data.surah.id,
-                    nama_latin: data.surah.nama_latin,
-                    arti: data.surah.arti,
-                    jumlah_ayat: data.surah.jumlah_ayat,
-                    tempat_turun: data.surah.tempat_turun,
+                    id: meta?.nomor ?? id,
+                    nomor: meta?.nomor ?? id,
+                    nama_latin: meta?.namaLatin ?? meta?.nama_latin ?? '',
+                    arti: meta?.arti ?? '',
+                    jumlah_ayat: meta?.jumlahAyat ?? meta?.jumlah_ayat ?? (data.ayat?.length ?? 0),
+                    tempat_turun: meta?.tempatTurun ?? meta?.tempat_turun ?? '',
+                    audioFull: meta?.audioFull ?? null,
                     ayat: data.ayat
                 };
 
@@ -632,6 +655,11 @@
                 document.getElementById('ayatContainer').innerHTML = '<p class="text-red-500 text-center p-4">Gagal memuat ayat</p>';
             }
             document.querySelector('#surahDetailPage .loading').classList.remove('active');
+        }
+
+        function getSurahMeta(nomor) {
+            let meta = allSurah.find(s => (s.nomor ?? s.id) === nomor);
+            return meta;
         }
 
         function displayAyat(ayatList, surahId) {
@@ -764,7 +792,9 @@
             try {
                 const res = await fetch(`${API_BASE}/juz/${id}`);
                 const data = await res.json();
-                displayJuzAyat(data.ayat || [], data.juz);
+                const ay = data.ayat || [];
+                const info = data.juz || { juz: id, start_verse: ay[0]?.ayat_id ?? ay[0]?.id ?? null, end_verse: ay[ay.length-1]?.ayat_id ?? ay[ay.length-1]?.id ?? null };
+                displayJuzAyat(ay, info);
             } catch (e) {
                 container.innerHTML = '<p class="text-red-500 text-center p-4">Gagal memuat detail Juz</p>';
             }
@@ -772,7 +802,7 @@
 
         function displayJuzAyat(ayat, juzInfo) {
             const container = document.getElementById('juzContainer');
-            const header = `<div class="p-4"><h3 class="text-xl font-bold text-gray-800">Juz ${juzInfo.juz}</h3><p class="text-sm text-gray-500">Ayat ${juzInfo.start_verse}–${juzInfo.end_verse}</p></div>`;
+            const header = `<div class="p-4"><h3 class="text-xl font-bold text-gray-800">Juz ${juzInfo?.juz ?? ''}</h3>${(juzInfo?.start_verse && juzInfo?.end_verse) ? `<p class="text-sm text-gray-500">Ayat ${juzInfo.start_verse}–${juzInfo.end_verse}</p>` : ''}</div>`;
             const body = ayat.map(a => `
                 <div class="ayat-card p-4 rounded-xl mb-3">
                     <div class="flex justify-between items-center mb-3">
@@ -782,8 +812,8 @@
                         </button>
                     </div>
                     <p class="arabic-text text-2xl text-gray-800 leading-loose mb-3">${a.teks_arab}</p>
-                    <p class="text-sm italic text-gray-600 mb-2">${a.teks_latin}</p>
-                    <p class="text-sm text-gray-700">${a.teks_indonesia}</p>
+                    ${a.teks_latin ? `<p class=\"text-sm italic text-gray-600 mb-2\">${a.teks_latin}</p>` : ''}
+                    ${a.teks_indonesia ? `<p class=\"text-sm text-gray-700\">${a.teks_indonesia}</p>` : ''}
                 </div>
             `).join('');
             container.innerHTML = header + body;
@@ -973,7 +1003,6 @@
             }
 
             try {
-                // Reset semua button play di ayat
                 document.querySelectorAll('[id^="playBtn-"]').forEach(b => {
                     b.innerHTML = `
                         <svg class="w-8 h-8" fill="currentColor" viewBox="0 0 24 24">
@@ -982,16 +1011,23 @@
                     `;
                 });
 
-                // Ambil audio URL dari API
-                const response = await fetch(`${API_BASE}/audio/${currentSurah.id}`);
-                const data = await response.json();
+                let url = null;
+                if (currentSurah?.audioFull) {
+                    const key = QARI_MAP[currentQari] || Object.keys(currentSurah.audioFull)[0];
+                    url = currentSurah.audioFull[key] || null;
+                }
+                if (!url) {
+                    const response = await fetch(`${API_BASE}/audio/${currentSurah.nomor ?? currentSurah.id}`);
+                    const data = await response.json();
+                    if (data.status === 'success') url = data.audio_url;
+                }
 
-                if (data.status === 'success' && data.audio_url) {
+                if (url) {
                     if (currentAudio) {
                         currentAudio.pause();
                     }
 
-                    currentAudio = new Audio(data.audio_url);
+                    currentAudio = new Audio(url);
                     currentAudio.play();
                     isPlaying = true;
 
